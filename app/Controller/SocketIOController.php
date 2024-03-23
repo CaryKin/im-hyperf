@@ -18,8 +18,10 @@ class SocketIOController extends BaseNamespace
     #[Event("connect")]
     public function onConnect(Socket $socket)
     {
+
         // 当有客户端连接时触发此方法
         $fd = $socket->getSid();
+        $this->adapter->add($socket->getSid(), "1111");
         echo "Client connected: $fd\n";
     }
 
