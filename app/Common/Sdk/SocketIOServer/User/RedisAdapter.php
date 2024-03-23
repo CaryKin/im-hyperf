@@ -2,6 +2,9 @@
 
 namespace App\Common\Sdk\SocketIOServer\User;
 
+use Hyperf\Coordinator\Constants;
+use Hyperf\Coordinator\CoordinatorManager;
+use Hyperf\Coroutine\Coroutine;
 use Hyperf\Redis\RedisFactory;
 use Hyperf\Redis\RedisProxy;
 use Hyperf\SocketIOServer\NamespaceInterface;
@@ -21,7 +24,7 @@ class RedisAdapter implements AdapterInterface
     /**
      * @var \Hyperf\Redis\Redis|RedisProxy
      */
-    protected $redis;
+    protected \Hyperf\Redis\Redis|RedisProxy $redis;
 
     protected int $ttl = 0;
 
@@ -30,36 +33,64 @@ class RedisAdapter implements AdapterInterface
         $this->redis = $redis->get($this->connection);
     }
 
-    public function add(int $uid, string $sid)
+    public function add(string $uid, string $sid)
     {
         $this->redis->multi();
         $this->redis->sAdd($this->getUidKey($uid), $sid);
-        foreach ($rooms as $room) {
-            $this->redis->sAdd($this->getRoomKey($room), $sid);
-            $this->redis->zAdd($this->getExpireKey(), microtime(true) * 1000 + $this->ttl, $sid);
-        }
-        $this->redis->sAdd($this->getStatKey(), $sid);
+        $this->redis->zAdd($this->getExpireKey(), microtime(true) * 1000 + $this->ttl, $uid);
         $this->redis->exec();
     }
 
-    public function del(string $sid, string ...$rooms)
+    public function del(string $uid, string $sid = "")
     {
-        // TODO: Implement del() method.
+        if (empty($sid)) {
+            $clientSids = $this->redis->sMembers($this->getUidKey($uid));
+            if (empty($clientSids)) {
+                return;
+            }
+            $this->del($uid, $sid);
+            $this->redis->multi();
+            $this->redis->del($this->getUidKey($uid));
+            $this->redis->exec();
+            return;
+        }
+        $this->redis->multi();
+        $this->redis->sRem($this->getUidKey($uid), $sid);
+        $this->redis->exec();
     }
 
-    public function broadcast($packet, $opts)
+    public function cleanUpExpired(): void
     {
-        // TODO: Implement broadcast() method.
+        Coroutine::create(function () {
+            while (true) {
+                if (CoordinatorManager::until(Constants::WORKER_EXIT)->yield($this->cleanUpExpiredInterval / 1000)) {
+                    break;
+                }
+                $this->cleanUpExpiredOnce();
+            }
+        });
     }
 
-    public function clients(string ...$rooms): array
+    public function cleanUpExpiredOnce(): void
     {
-        // TODO: Implement clients() method.
-    }
+        // TODO: Redis doesn't provide atomicity. It may be necessary to use a lock here.
+        $uids = $this->redis->zRangeByScore($this->getExpireKey(), '-inf', (string) (microtime(true) * 1000));
 
-    public function clientRooms(string $sid): array
+        if (! empty($uids)) {
+            foreach ($uids as $uid) {
+                $this->del($uid);
+            }
+
+            $this->redis->zRem($this->getExpireKey(), ...$uids);
+        }
+    }
+    protected function getExpireKey(): string
     {
-        // TODO: Implement clientRooms() method.
+        return join(':', [
+            $this->redisPrefix,
+            $this->nsp->getNamespace(),
+            'uid_expire',
+        ]);
     }
 
     protected function getUidKey(string $uid): string
