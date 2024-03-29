@@ -6,22 +6,28 @@ namespace App\Controller;
 
 use App\Common\Cache\SocketIOCache;
 use App\Common\Form\CacheableForm;
+use App\Common\Sdk\SocketIOServer\RedisAdapter;
+//use App\Common\Sdk\SocketIOServer\Socket;
 use Hyperf\SocketIOServer\Annotation\Event;
 use Hyperf\SocketIOServer\Annotation\SocketIONamespace;
 use Hyperf\SocketIOServer\BaseNamespace;
-use Hyperf\SocketIOServer\Socket;
+
 use Hyperf\Codec\Json;
+use Hyperf\SocketIOServer\Socket;
+
 
 #[SocketIONamespace("/")]
 class SocketIOController extends BaseNamespace
 {
+    public $a = 1;
+
     #[Event("connect")]
     public function onConnect(Socket $socket)
     {
-
+        $this->a += 1;
         // 当有客户端连接时触发此方法
         $fd = $socket->getSid();
-        $this->adapter->add($socket->getSid(), "1111");
+//        $socket->bind($fd, $this->a);
         echo "Client connected: $fd\n";
     }
 

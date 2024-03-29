@@ -17,6 +17,7 @@ namespace App\Controller;
 
 
 use App\Common\Cache\SocketIOCache;
+use App\Log;
 use Psr\SimpleCache\InvalidArgumentException;
 
 class IndexController extends AbstractController
@@ -27,8 +28,8 @@ class IndexController extends AbstractController
      */
     public function index()
     {
-
-        SocketIOCache::setFd('ddd',"ws_fd:65f9aaf3e5de5#2036");
+        $io = \Hyperf\Context\ApplicationContext::getContainer()->get(\Hyperf\SocketIOServer\SocketIO::class);
+        $io->to('socketId')->emit('hey', 'I just met you');
         return $this->response->json([
             "data" => 111
         ]);

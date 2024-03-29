@@ -1,47 +1,25 @@
 <?php
 
-namespace App\Common\Sdk\SocketIOServer\User;
+namespace App\Common\Sdk\SocketIOServer;
 
 use Hyperf\Coordinator\Constants;
 use Hyperf\Coordinator\CoordinatorManager;
 use Hyperf\Coroutine\Coroutine;
-use Hyperf\Redis\RedisFactory;
-use Hyperf\Redis\RedisProxy;
-use Hyperf\SocketIOServer\NamespaceInterface;
-use Hyperf\SocketIOServer\SidProvider\SidProviderInterface;
-use Hyperf\WebSocketServer\Sender;
 
-class RedisAdapter implements AdapterInterface
+class RedisAdapter extends \Hyperf\SocketIOServer\Room\RedisAdapter
 {
-    protected string $redisPrefix = 'ws';
-
-    protected int $retryInterval = 1000;
-
-    protected int $cleanUpExpiredInterval = 30000;
-
-    protected string $connection = 'default';
-
-    /**
-     * @var \Hyperf\Redis\Redis|RedisProxy
-     */
-    protected \Hyperf\Redis\Redis|RedisProxy $redis;
-
-    protected int $ttl = 0;
-
-    public function __construct(RedisFactory $redis, protected Sender $sender, protected NamespaceInterface $nsp, protected SidProviderInterface $sidProvider)
+    public function bind(string $sid, string $uid): void
     {
-        $this->redis = $redis->get($this->connection);
+        $this->add($sid, "U_" . $uid);
     }
 
-    public function add(string $uid, string $sid)
+    public function getSidFromUid(string|int $uid)
     {
-        $this->redis->multi();
-        $this->redis->sAdd($this->getUidKey($uid), $sid);
-        $this->redis->zAdd($this->getExpireKey(), microtime(true) * 1000 + $this->ttl, $uid);
-        $this->redis->exec();
+        $clientSids = $this->redis->sMembers($this->getUidKey($uid));
+        return $clientSids ?: [];
     }
 
-    public function del(string $uid, string $sid = "")
+    public function unBind(string|int $uid, string $sid = "")
     {
         if (empty($sid)) {
             $clientSids = $this->redis->sMembers($this->getUidKey($uid));
@@ -59,6 +37,7 @@ class RedisAdapter implements AdapterInterface
         $this->redis->exec();
     }
 
+
     public function cleanUpExpired(): void
     {
         Coroutine::create(function () {
@@ -74,17 +53,27 @@ class RedisAdapter implements AdapterInterface
     public function cleanUpExpiredOnce(): void
     {
         // TODO: Redis doesn't provide atomicity. It may be necessary to use a lock here.
-        $uids = $this->redis->zRangeByScore($this->getExpireKey(), '-inf', (string) (microtime(true) * 1000));
+        $sids = $this->redis->zRangeByScore($this->getExpireKey(), '-inf', (string) (microtime(true) * 1000));
 
+        if (! empty($sids)) {
+            foreach ($sids as $sid) {
+                $this->del($sid);
+            }
+
+            $this->redis->zRem($this->getExpireKey(), ...$sids);
+        }
+
+        // TODO: Redis doesn't provide atomicity. It may be necessary to use a lock here.
+        $uids = $this->redis->zRangeByScore($this->getExpireKey(), '-inf', (string) (microtime(true) * 1000));
         if (! empty($uids)) {
             foreach ($uids as $uid) {
                 $this->del($uid);
             }
 
-            $this->redis->zRem($this->getExpireKey(), ...$uids);
+            $this->redis->zRem($this->getUidExpireKey(), ...$uids);
         }
     }
-    protected function getExpireKey(): string
+    protected function getUidExpireKey(): string
     {
         return join(':', [
             $this->redisPrefix,
